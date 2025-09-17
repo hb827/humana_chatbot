@@ -1,0 +1,171 @@
+---
+title: "Chatbot Evaluation"
+author: "Hanna Muller"
+date: "2025-09-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(jsonlite)
+library(cowplot)
+
+file_path <- "llmaaj_results/llmaaj_gpt2.json"
+
+```
+
+
+```{r capitalize, echo=F}
+label_fix <- function(text_string) {
+  text_string <- gsub("_", " ", text_string)
+  
+  words <- strsplit(text_string, " ")[[1]]
+  capitalized_words <- sapply(words, function(word) {
+    if (nchar(word) > 0) {
+      paste0(toupper(substring(word, 1, 1)), tolower(substring(word, 2)))
+    } else {
+      ""
+    }
+  })
+  result_string <- paste(capitalized_words, collapse = " ")
+  
+  return(result_string)
+}
+```
+
+The following text pertains to a RAG chatbot developed for answering questions about Slamon et al. (1987). The chatbot uses `gpt2` for question answering.
+
+## Key Points
+
+```{r process_data, echo=F}
+df <- fromJSON(file_path) %>% 
+  unnest(llmaaj) %>% 
+  unnest_wider(relevance, names_sep = "_") %>% 
+  unnest_wider(groundedness, names_sep = "_") %>% 
+  unnest_wider(helpfulness, names_sep = "_") %>% 
+  unnest_wider(accuracy, names_sep = "_") %>% 
+  filter(user_type != "testing")
+
+df_long <- df %>% 
+  select(id, user_type, question, retrieved_passages, completion,
+         response_time, relevance_2, groundedness_2, helpfulness_2, accuracy_2) %>% 
+  rename(relevance=relevance_2,
+         groundedness=groundedness_2,
+         helpfulness=helpfulness_2,
+         accuracy=accuracy_2) %>%
+  mutate(across(c(relevance, groundedness, helpfulness, accuracy), as.numeric))%>% 
+  pivot_longer(c(response_time,relevance,groundedness,helpfulness,accuracy),names_to = "dimension", values_to = "score")
+
+df_summary <- df_long %>% 
+  group_by(dimension) %>% 
+  drop_na(score) %>% 
+  summarise(avg_score = mean(score, na.rm=T),
+            sd_score = sd(score,na.rm=T),
+            n=n()) %>% 
+  mutate(sem = sd_score / sqrt(n),
+         upper=avg_score+sem,
+         lower=avg_score-sem)
+
+
+```
+
+* Chatbot responses took, on average, `r round(df_summary[df_summary$dimension=="response_time",]$avg_score,2)` seconds to generate. This timing is too slow for a production chatbot.
+* Retrieved passages were rated, on average, `r round(df_summary[df_summary$dimension=="relevance",]$avg_score,2)` out of 5 for relevance to the query, suggesting that the retrieval component of the system was operating well.
+* Chatbot responses were rated, on average, `r round(df_summary[df_summary$dimension=="groundedness",]$avg_score,2)` for groundedness, `r round(df_summary[df_summary$dimension=="helpfulness",]$avg_score,2)` for helpfulness, and `r round(df_summary[df_summary$dimension=="accuracy",]$avg_score,2)` for accuracy. All scores out of 5. This pattern suggests that the chatbot often did not successfully extract appropriate answers from the retrieved passages.
+* Responses to queries from 'general' audiences (e.g. '`r df[df$user_type=="general",]$question[1]`'), queries from 'expert' audiences (e.g. '`r df[df$user_type=="expert",]$question[1]`'), and queries from 'patient' audiences (e.g. '`r df[df$user_type=="patient",]$question[1]`') did not systematically differ in quality. Larger sample sizes are needed to determine if differences exist.
+* **Important note**: a significant limitation of this evaluation is that chatbot responses and retrieved passages were evaluated by a small LLM-as-a-judge *with no specific medical domain expertise*. These evaluations may not align well with human expert annotations of the same units on the same dimensions. Future iterations of this project should validate LLM-as-a-judge annotations using a high quality ground truth sample, and potentially pivot to larger and/or fine-tuned LLMs for annotation.
+
+
+## Detailed Findings
+
+### Average ratings and response times across all queries
+
+```{r plot, echo=F}
+
+plot1 <- ggplot(df_summary %>% 
+                  filter(dimension != "response_time") %>% 
+                  rowwise() %>% 
+                  mutate(dimension = label_fix(dimension)),
+       aes(x=dimension,y=avg_score)) +
+  geom_col() +
+  geom_errorbar(aes(ymin=lower,ymax=upper),width = 0.2) +
+  scale_y_continuous(name="Rating") +
+  xlab("Evaluation Dimension")
+
+
+plot2 <- ggplot(df_summary %>% 
+                  filter(dimension == "response_time")%>% 
+                  rowwise() %>% 
+                  mutate(dimension = label_fix(dimension)),
+       aes(x=dimension,y=avg_score)) +
+  geom_col() +
+  geom_errorbar(aes(ymin=lower,ymax=upper),width = 0.2) +
+  scale_y_continuous(position = "right", name="Seconds",limits=c(0,35)) +
+  xlab("")
+
+plot_grid(plot1, plot2, ncol = 2, rel_widths = c(3, 1))
+
+```
+
+### Average ratings and response times by user type
+
+```{r by_user_group, echo=F, warning=F, message=F}
+
+df_summary_by_user <- df_long %>% 
+  group_by(user_type, dimension) %>% 
+  drop_na(score) %>% 
+  summarise(avg_score = mean(score, na.rm=T),
+            sd_score = sd(score,na.rm=T),
+            n=n()) %>% 
+  mutate(sem = sd_score / sqrt(n),
+         upper=avg_score+sem,
+         lower=avg_score-sem)
+
+
+plot1_grouped <- ggplot(df_summary_by_user %>% 
+                  filter(dimension != "response_time") %>% 
+                  rowwise() %>% 
+                  mutate(dimension = label_fix(dimension)),
+       aes(x=dimension,y=avg_score,fill=user_type)) +
+  geom_col(position="dodge") +
+  geom_errorbar(aes(ymin=lower,ymax=upper),width = 0.2,position=position_dodge(.9)) +
+  scale_y_continuous(name="Rating") +
+  xlab("Evaluation Dimension") +
+  theme(legend.position="none")+
+  scale_fill_brewer(palette = "Dark2")
+
+
+plot2_grouped <- ggplot(df_summary_by_user %>% 
+                  filter(dimension == "response_time")%>% 
+                  rowwise() %>% 
+                  mutate(dimension = label_fix(dimension),
+                         user_type = label_fix(user_type)),
+       aes(x=dimension,y=avg_score,fill=user_type)) +
+  geom_col(position="dodge") +
+  geom_errorbar(aes(ymin=lower,ymax=upper),width = 0.2,position=position_dodge(.9)) +
+  scale_y_continuous(position = "right", name="Seconds",limits=c(0,35)) +
+  xlab("")+
+  scale_fill_brewer(palette = "Dark2")
+
+plot_grid(plot1_grouped, plot2_grouped, ncol = 2, rel_widths = c(1.5, 1))
+
+```
+
+
+
+### Benchmarking dataset
+
+The chatbot was evaluated using a small synthetic dataset of 30 questions. The questions were generated using `Qwen/Qwen3-0.6B`. The model was prompted three times, each time to generate 10 questions that a potential user might ask about the target article (Slamon et al., 1987). Each of the prompts instructed the model to simulate a different hypothetical user: general readers, domain experts (such as those with an advanced degree in medicine, biology, or genetics), and breast cancer patients. The 30 questions generated this way were then used to prompt the chatbot (once per prompt), and responses were recorded and evaluated.
+
+### Evaluation procedure
+
+Chatbot responses were evaluated based on five dimensions: response time, retrieval relevance, response groundedness, response helpfulness, and response accuracy. Dimensions which were evaluated using an LLM as a judge used `Qwen/Qwen3-0.6B`.
+
+* **Response Time**: This dimension was evaluated automatically by recording the timestamp immediately before and after generating the chatbot's response to the query.
+* **Retrieval Relevance**: This dimension was evaluated using an LLM as a judge. The LLM was prompted to provide a numerical relevance rating on a scale from 1 to 5 and was provided with both the *query* and the *retrieved passages*. Higher scores indicate that the retrieved passages were more relevant to the query, defined as containing the answer to the query.
+* **Response Groundedness**: This dimension was evaluated using an LLM as a judge. The LLM was prompted to provide a numerical groundedness rating on a scale from 1 to 5 and was provided with both the *chatbot response* and the *retrieved passages*. Higher scores indicate that the chatbot response was more grounded in the retrieved passages; lower scores indicate the presence of hallucinations.
+* **Response Helpfulness**: This dimension was evaluated using an LLM as a judge. The LLM was prompted to provide a numerical helpfulness rating on a scale from 1 to 5 and was provided with both the *query* and the *chatbot response*. Higher scores indicate that the response was more helpful to the hypothetical user who submitted the query.
+* **Response Accuracy**: This dimension was evaluated using an LLM as a judge. The LLM was prompted to provide a numerical accuracy rating on a scale from 1 to 5 and was provided with the *query*, the *retrieved passages*, and the *chatbot response*. Higher scores indicate that the response was a more accurate response to the query, given the retrieved passages.
+
+While the evalutation dimensions have some overlap, they capture distinct potential patterns of failure, which can be helpful for identifying points of failure in the system. For example, in cases where the answer to the user's query is not contained in the retrieved passages, **retrieval relevance** will be low. In such a case, a chatbot response like "I'm sorry, I couldn't find the answer to your query in the document" would receive low ratings for **helpfulness** but high ratings for **groundedness** and **accuracy**; a chatbot response that correctly summarises the information contained in the (irrelevant) retrieved passages would receive low ratings for **accuracy** and **helpfulness** but high ratings for **groundedness**; a chatbot response that directly answers the query using information not contained in the retrieved passages would receive low ratings for **accuracy** and **groundedness** but high ratings for **helpfulness**.

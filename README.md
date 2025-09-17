@@ -38,5 +38,10 @@ The evaluation procedure was run twice: once with GPT-2 as the foundation model 
 ### Discussion of ClinVec
 
 1. What are the 3 takeaways for this research?
+     a. ClinGraph is a knowledge graph representing "diagnosis codes (ICD9CM, ICD10CM, phecodes), laboratory tests (LOINC), medications (RxNorm, ATC), procedures (CPT), and other controlled clinical vocabularies (SNOMED CT, UMLS)". ClinGraph was used to create ClinVec, a set of embeddings of clinical terms.
+     b. ClinVec embedding similarity scores closely track expert judgments of the similarity of terms. In addition, the organization of the ClinVec space captures natural groupings of the concepts encoded by ClinVec - for example, organ systems. These facts, among other demonstrations provided by the authors, suggest that the ClinVec embedding space successfully captures the types of conceptual similarity that are most relevant in medical applications.
+     c. ClinVec embeddings can be used to fine-tune Large Language Models, resulting in improved accuracy scores in a question-answering task based on US Medical Licensing Exams as well as a dataset of medical questions collected from healthcare settings across 16 African countries. This success suggests that ClinVec embeddings may have broad utility in adapting LLMs to medical usecases.
 3. How could this research be important for Humana?
+     ClinVec embeddings could be used for a wide range of LLM applications in medical settings.
 4. How can you include this research into your Q/A chatbot?
+     There are two broad approaches for including ClinVec in a RAG QA chatbot like the one developed here. The first is to use ClinVec embeddings to improve upon the sentence embedding model, in order to improve retrieval relevance. The second is to use ClinVec embeddings to improve upon the question-answering model, in order to improve response accuracy.
